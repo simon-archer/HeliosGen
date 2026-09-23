@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jobStore } from "@/lib/jobStore";
+import { jobEvents } from "@/lib/jobEvents";
 import { pollKieJob } from "@/lib/kieJobPoller";
 import { rewriteLocalMediaForKie } from "@/lib/kieUpload";
 import { ensureR2 } from "@/lib/storage";
@@ -115,7 +116,9 @@ export async function POST(req: NextRequest) {
         const result = await runFal<{ video?: { url?: string } }>(falKey, endpoint, input);
         if (!result.video?.url) throw new Error("fal.ai completed without a video URL");
         const videoUrl = await ensureR2(result.video.url, "generated");
-        jobStore.set(taskId, { status: "done", videoUrl });
+        const completed = { status: "done" as const, videoUrl };
+        jobStore.set(taskId, completed);
+        jobEvents.emit(`job:${taskId}`, completed);
         guestDb.insertGeneration({
           task_id: taskId, user_id: userId, generation_type: "video", status: "done", video_url: videoUrl,
           model: videoModel, prompt, aspect_ratio: aspectRatio, duration: clampedDuration,
@@ -124,7 +127,9 @@ export async function POST(req: NextRequest) {
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         console.error("[fal/video] background error:", message, e);
-        jobStore.set(taskId, { status: "error", error: message });
+        const failed = { status: "error" as const, error: message };
+        jobStore.set(taskId, failed);
+        jobEvents.emit(`job:${taskId}`, failed);
       }
     })();
 

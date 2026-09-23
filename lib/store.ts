@@ -153,7 +153,7 @@ interface WorkflowStore {
   addToast:    (message: string, type?: Toast["type"], href?: string, title?: string, preview?: string) => void;
   removeToast: (id: string) => void;
 
-  // ── Kie key status (null = unknown, true = set, false = not set)
+  // ── Generation-provider status (null = unknown, true = set, false = not set)
   kieKeySet:    boolean | null;
   setKieKeySet: (v: boolean | null) => void;
 

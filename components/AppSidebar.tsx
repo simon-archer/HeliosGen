@@ -682,7 +682,7 @@ export function AppSidebar() {
       fetch("/api/settings/kie-key").then((r) => r.json()),
       fetch("/api/settings/fal-key").then((r) => r.json()),
     ]).then(([kie, fal]) => {
-      setKieKeySet(!!kie.hasToken);
+      setKieKeySet(!!kie.hasToken || !!fal.hasToken);
       if (!kie.hasToken && fal.hasToken) {
         const providers = loadModelProviders();
         let changed = false;

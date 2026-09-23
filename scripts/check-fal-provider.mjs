@@ -11,5 +11,7 @@ const [providers, imageRoute, videoRoute, sidebar] = await Promise.all([
 assert.match(providers, /"gpt-image-2-5-sunburst"[\s\S]*"minimax-h3"/);
 assert.match(imageRoute, /openai\/gpt-image-2\.5\/\$\{variant\}/);
 assert.match(videoRoute, /minimax\/h3-max\/\$\{imageUrl/);
+assert.equal((videoRoute.match(/jobEvents\.emit\(`job:\$\{taskId\}`/g) ?? []).length, 2);
 assert.match(sidebar, /!kie\.hasToken && fal\.hasToken[\s\S]*"minimax-h3"/);
+assert.match(sidebar, /setKieKeySet\(!!kie\.hasToken \|\| !!fal\.hasToken\)/);
 console.log("fal.ai provider routes are wired");
