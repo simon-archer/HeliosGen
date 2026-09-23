@@ -7,6 +7,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useWorkflowStore } from "@/lib/store";
 import { useChatSessionStore } from "@/lib/chatSessionStore";
 import { useFolderStore } from "@/lib/folderStore";
+import { loadModelProviders, saveModelProviders } from "@/lib/providers";
 import {
   Workflow,
   Image as ImageIcon,
@@ -677,10 +678,20 @@ export function AppSidebar() {
   const setAzureKeySet    = useWorkflowStore((s) => s.setAzureKeySet);
 
   React.useEffect(() => {
-    fetch("/api/settings/kie-key")
-      .then((r) => r.json())
-      .then((d) => setKieKeySet(!!d.hasToken))
-      .catch(() => setKieKeySet(null));
+    Promise.all([
+      fetch("/api/settings/kie-key").then((r) => r.json()),
+      fetch("/api/settings/fal-key").then((r) => r.json()),
+    ]).then(([kie, fal]) => {
+      setKieKeySet(!!kie.hasToken);
+      if (!kie.hasToken && fal.hasToken) {
+        const providers = loadModelProviders();
+        let changed = false;
+        for (const model of ["gpt-image-2-5-flare", "gpt-image-2-5-sunburst", "minimax-h3"] as const) {
+          if (providers[model] === undefined) { providers[model] = "fal"; changed = true; }
+        }
+        if (changed) saveModelProviders(providers);
+      }
+    }).catch(() => setKieKeySet(null));
     fetch("/api/settings/azure-key")
       .then((r) => r.json())
       .then((d) => setAzureKeySet(!!d.hasToken))
