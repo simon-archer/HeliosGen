@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { IMAGE_MODELS, VIDEO_MODELS } from "@/lib/modelConfig";
 import { MODEL_GROUPS } from "@/lib/models";
 import { useWorkflowStore } from "@/lib/store";
-import { PROVIDERS, ProviderId, loadModelProviders, saveModelProviders, getModelProvider } from "@/lib/providers";
+import { PROVIDERS, ProviderId, loadModelProviders, saveModelProviders, getModelProvider, providerSupportsModel, modelHasProviderChoice } from "@/lib/providers";
 
 /* ─── Provider options (re-exported for backwards compat) ───────────────────── */
 
@@ -172,6 +172,9 @@ function ProviderBrandIcon({ id, size = 12 }: { id: ProviderId; size?: number })
       </span>
     );
   }
+  if (id === "fal") {
+    return <span style={{ color: "#a78bfa", fontSize: Math.round(size * 0.8), fontWeight: 800 }}>F</span>;
+  }
   if (id === "codex") {
     return (
       <svg className="text-[#2DD4BF] shrink-0" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd">
@@ -213,7 +216,7 @@ function ProviderToggle({
         flexShrink: 0,
       }}
     >
-      {PROVIDERS.map((p) => {
+      {PROVIDERS.filter((p) => providerSupportsModel(p.id, modelId)).map((p) => {
         const active = value === p.id;
         return (
           <button
@@ -349,7 +352,7 @@ function ModelGroup({
               category={m.category}
               value={providers[m.id] ?? "kie"}
               onChange={(v) => onProviderChange(m.id, v)}
-              azureSupported={!!m.hasAzureDeployment}
+              azureSupported={modelHasProviderChoice(m.id)}
             />
             {/* Deployment name — shown only for Azure-capable models when Azure is selected */}
             {m.hasAzureDeployment && (providers[m.id] ?? "kie") === "azure" && (
@@ -425,6 +428,9 @@ function ApiKeysPanel({
   azureKeyStatus,
   onAzureKeySave,
   onAzureKeyDelete,
+  falKeyStatus,
+  onFalKeySave,
+  onFalKeyDelete,
   codexStatus,
   onCodexLoginSuccess,
 }: {
@@ -436,6 +442,9 @@ function ApiKeysPanel({
   azureKeyStatus: "unknown" | "set" | "unset";
   onAzureKeySave: (key: string) => Promise<void>;
   onAzureKeyDelete: () => Promise<void>;
+  falKeyStatus: "unknown" | "set" | "unset";
+  onFalKeySave: (key: string) => Promise<void>;
+  onFalKeyDelete: () => Promise<void>;
   codexStatus: CodexStatus;
   onCodexLoginSuccess: () => void;
 }) {
@@ -660,6 +669,8 @@ function ApiKeysPanel({
           </div>
         )}
       </div>
+
+      <FalKeyCard status={falKeyStatus} onSave={onFalKeySave} onDelete={onFalKeyDelete} />
 
       {/* ──── Azure Foundry API key + endpoint ────────────────────────── */}
       <div
@@ -945,6 +956,37 @@ function ApiKeysPanel({
         )}
       </div>
 
+    </div>
+  );
+}
+
+function FalKeyCard({ status, onSave, onDelete }: {
+  status: "unknown" | "set" | "unset";
+  onSave: (key: string) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    if (!value.trim()) return;
+    setSaving(true); setError(null);
+    try { await onSave(value.trim()); setValue(""); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : "Failed to save"); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 16, background: "rgba(167,139,250,0.04)", border: "1px solid rgba(167,139,250,0.16)", borderRadius: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ width: 28, height: 28, borderRadius: 7, background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}><ProviderBrandIcon id="fal" size={16} /></span>
+        <div><div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>fal.ai</div><div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 1 }}>GPT Image 2.5 and MiniMax H3</div></div>
+        {status === "set" && <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 600, color: "rgba(74,222,128,0.8)", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 5, padding: "2px 7px", letterSpacing: "0.04em" }}>SAVED</span>}
+      </div>
+      {status === "unknown" ? <div style={{ height: 31, borderRadius: 7, background: "rgba(255,255,255,0.05)" }} /> : status === "set" ? (
+        <div style={{ display: "flex", gap: 8 }}><input type="password" value="placeholdertoken" readOnly style={{ ...INPUT_STYLE, flex: 1, color: "rgba(255,255,255,0.3)" }} /><button onClick={onDelete} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.06)", color: "rgba(239,68,68,0.7)", cursor: "pointer" }}>Remove</button></div>
+      ) : (
+        <><div style={{ display: "flex", gap: 8 }}><input type="password" placeholder="Paste your fal.ai API key" value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void save(); }} style={{ ...INPUT_STYLE, flex: 1 }} /><button onClick={() => void save()} disabled={!value.trim() || saving} style={{ padding: "7px 14px", borderRadius: 7, border: "none", background: value.trim() ? "rgba(167,139,250,0.15)" : "rgba(255,255,255,0.04)", color: value.trim() ? "#c4b5fd" : "rgba(255,255,255,0.25)", cursor: value.trim() ? "pointer" : "default" }}>{saving ? "Saving…" : "Save"}</button></div>{error && <p style={{ fontSize: 11, color: "rgba(239,68,68,0.7)", margin: 0 }}>{error}</p>}<a href="https://fal.ai/dashboard/keys" target="_blank" rel="noreferrer" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>Get a key from fal.ai</a></>
+      )}
     </div>
   );
 }
@@ -1342,6 +1384,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [azureTextModelName, setAzureTextModelName]   = useState("model-router");
   const [kieKeyStatus, setKieKeyStatus]               = useState<"unknown" | "set" | "unset">("unknown");
   const [azureKeyStatus, setAzureKeyStatus]   = useState<"unknown" | "set" | "unset">("unknown");
+  const [falKeyStatus, setFalKeyStatus]       = useState<"unknown" | "set" | "unset">("unknown");
   const [codexStatus, setCodexStatus]         = useState<CodexStatus>({ kind: "unknown" });
   const setKieKeySet    = useWorkflowStore((s) => s.setKieKeySet);
   const setAzureKeySet  = useWorkflowStore((s) => s.setAzureKeySet);
@@ -1381,6 +1424,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         .then((d) => setAzureKeyStatus(d.hasToken ? "set" : "unset"))
         .catch(() => setAzureKeyStatus("unset"))
     );
+    fetch("/api/settings/fal-key")
+      .then((r) => r.json()).then((d) => setFalKeyStatus(d.hasToken ? "set" : "unset"))
+      .catch(() => setFalKeyStatus("unset"));
     // Check whether the server has a working codex-imagegen + codex login
     refreshCodexStatus();
   }, [refreshCodexStatus]);
@@ -1452,6 +1498,17 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     await fetch("/api/settings/azure-key", { method: "DELETE", headers: h });
     setAzureKeyStatus("unset");
     setAzureKeySet(false);
+  };
+
+  const handleFalKeySave = async (key: string) => {
+    const res = await fetch("/api/settings/fal-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ falApiKey: key }) });
+    if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
+    setFalKeyStatus("set");
+  };
+
+  const handleFalKeyDelete = async () => {
+    await fetch("/api/settings/fal-key", { method: "DELETE" });
+    setFalKeyStatus("unset");
   };
 
   const handleAzureTextDeploymentChange = (v: string) => {
@@ -1657,6 +1714,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                 azureKeyStatus={azureKeyStatus}
                 onAzureKeySave={handleAzureKeySave}
                 onAzureKeyDelete={handleAzureKeyDelete}
+                falKeyStatus={falKeyStatus}
+                onFalKeySave={handleFalKeySave}
+                onFalKeyDelete={handleFalKeyDelete}
                 codexStatus={codexStatus}
                 onCodexLoginSuccess={refreshCodexStatus}
               />

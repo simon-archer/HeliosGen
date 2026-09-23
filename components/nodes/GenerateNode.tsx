@@ -16,7 +16,7 @@ type GenerateNodeType = Node<NodeData, "generateNode">;
 
 import { ShieldBan } from "lucide-react";
 import { IMAGE_MODELS, AZURE_POPULAR_SIZES, validateAzureCustomSize } from "@/lib/modelConfig";
-import { PROVIDERS, ProviderId, getModelProvider, setModelProvider, modelHasProviderChoice } from "@/lib/providers";
+import { PROVIDERS, ProviderId, getModelProvider, setModelProvider, modelHasProviderChoice, providerSupportsModel } from "@/lib/providers";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
 
@@ -390,7 +390,6 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
     };
   }, [model]);
   const isAzureProvider = currentProvider === "azure";
-  const isCodexProvider = currentProvider === "codex";
 
   const promptInfo = (() => {
     const promptEdge = edges.find((e) => e.target === id && e.targetHandle === "prompt");
@@ -646,6 +645,10 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
       try { return (JSON.parse(localStorage.getItem("aiui-model-providers") ?? "{}")[model] ?? "kie") === "codex"; }
       catch { return false; }
     })();
+    const isFal = !!(() => {
+      try { return (JSON.parse(localStorage.getItem("aiui-model-providers") ?? "{}")[model] ?? "kie") === "fal"; }
+      catch { return false; }
+    })();
 
     const payload = {
       model,
@@ -661,6 +664,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
         } : {}),
       } : {}),
       ...(isCodex ? { codexProvider: true } : {}),
+      ...(isFal ? { falProvider: true } : {}),
     };
 
     if (!resolvedPrompt.trim()) {
@@ -1142,7 +1146,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
               </button>
               {providerPopup.visible && (
                 <div className={`absolute bottom-full left-0 mb-2 w-36 bg-[#111622] border border-[#1E2840] rounded-md overflow-hidden z-[1002] shadow-2xl ${providerPopup.className}`}>
-                  {PROVIDERS.map((p) => (
+                  {PROVIDERS.filter((p) => providerSupportsModel(p.id, model)).map((p) => (
                     <button
                       key={p.id}
                       onMouseDown={(e) => e.stopPropagation()}
@@ -1432,7 +1436,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
           )}
 
           {/* Generate button — always right */}
-          {!readOnly && <GenerateButton onClick={handleGenerateBatch} busy={animBusy} disabled={promptOverLimit || (!isCodexProvider && kieKeySet === false) || busy || hasFailedImageInput} warningMessages={hasFailedImageInput ? ["The connected image input has no valid content"] : undefined} />}
+          {!readOnly && <GenerateButton onClick={handleGenerateBatch} busy={animBusy} disabled={promptOverLimit || (currentProvider === "kie" && kieKeySet === false) || busy || hasFailedImageInput} warningMessages={hasFailedImageInput ? ["The connected image input has no valid content"] : undefined} />}
         </div>
       </div>
 
@@ -1554,6 +1558,7 @@ function ChevronIcon({ open }: { open: boolean }) {
 
 /** Backend brand mark for the Provider pill (kie/azure/codex) — distinct from NodeProviderIcon's model-brand icons. */
 function ProviderBrandIcon({ id }: { id: ProviderId }) {
+  if (id === "fal") return <span className="text-[#A78BFA] text-[10px] font-extrabold">F</span>;
   if (id === "kie") {
     return (
       <span className="text-[#2DD4BF] shrink-0" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "11px", height: "11px", fontSize: "10px", fontWeight: 700 }}>
@@ -1598,4 +1603,3 @@ function NodeProviderIcon({ provider }: { provider: string }) {
       return null;
   }
 }
-

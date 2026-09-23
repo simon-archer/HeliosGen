@@ -15,9 +15,15 @@ import { getKieTokenForUser } from "@/lib/getKieToken";
 import { getAzureKeyForUser } from "@/lib/getAzureKey";
 import { GUEST_USER_ID } from "@/lib/guestMode";
 import * as guestDb from "@/lib/guest/db";
+import { falUpload, runFal } from "@/lib/fal";
 
 const BASE   = "https://api.kie.ai";
 const CREATE = `${BASE}/api/v1/jobs/createTask`;
+
+const FAL_IMAGE_SIZE: Record<string, string> = {
+  auto: "auto", "1:1": "square_hd", "16:9": "landscape_16_9", "9:16": "portrait_16_9",
+  "4:3": "landscape_4_3", "3:4": "portrait_4_3",
+};
 
 /**
  * A minimal HTTPS POST that uses Node.js core — NOT Next.js's patched `fetch`.
@@ -285,6 +291,7 @@ export async function POST(req: NextRequest) {
     azureCustomWidth,
     azureCustomHeight,
     codexProvider,
+    falProvider,
     debugOnly,
   } = (await req.json()) as {
     model?:              string;
@@ -299,6 +306,7 @@ export async function POST(req: NextRequest) {
     azureCustomWidth?:   number;     // manual size — used when aspectRatio === "custom"
     azureCustomHeight?:  number;
     codexProvider?:      boolean;    // route through the server's local codex-imagegen CLI
+    falProvider?:        boolean;    // route through fal.ai using the locally stored key
     debugOnly?:          boolean;
   };
 
@@ -321,6 +329,56 @@ export async function POST(req: NextRequest) {
   }
 
   const currentUserId = GUEST_USER_ID;
+
+  // ── fal.ai branch ────────────────────────────────────────────────────────────
+  if (falProvider) {
+    const falKey = guestDb.getFalApiKey();
+    if (!falKey) return NextResponse.json({ error: "fal.ai API key is not configured. Add it in Settings." }, { status: 500 });
+    if (model !== "gpt-image-2-5-flare" && model !== "gpt-image-2-5-sunburst") {
+      return NextResponse.json({ error: `fal.ai is not configured for ${cfg.name}.` }, { status: 400 });
+    }
+
+    const taskId = `fal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    jobStore.set(taskId, { status: "pending", type: "image", userId: currentUserId ?? undefined });
+    const variant = model.endsWith("flare") ? "flare" : "sunburst";
+
+    (async () => {
+      try {
+        const uploaded = await Promise.all(r2ImageUrls.slice(0, cfg.maxImages).map(async (url, i) => {
+          const buffer = await fetchBuffer(url);
+          const ext = url.split("?")[0].split(".").pop()?.toLowerCase();
+          const type = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png";
+          return falUpload(falKey, buffer, `reference-${i}.${type === "image/jpeg" ? "jpg" : "png"}`, type);
+        }));
+        const endpoint = `openai/gpt-image-2.5/${variant}/${uploaded.length ? "edit" : "text-to-image"}`;
+        const input: Record<string, unknown> = {
+          prompt: prompt.slice(0, cfg.apiInput.promptMaxLength ?? 20000),
+          image_size: FAL_IMAGE_SIZE[aspectRatio] ?? "auto",
+          quality: ["low", "medium", "high", "xhigh", "max"].includes(quality) ? quality : "high",
+          output_format: "png",
+          num_images: 1,
+        };
+        if (uploaded.length) input.image_urls = uploaded;
+        const result = await runFal<{ images?: Array<{ url?: string; content_type?: string }> }>(falKey, endpoint, input);
+        const output = result.images?.[0];
+        if (!output?.url) throw new Error("fal.ai completed without an image URL");
+        const buffer = await fetchBuffer(output.url);
+        const imageUrl = await uploadBuffer(buffer, output.content_type ?? "image/png", "generated");
+        jobStore.set(taskId, { status: "done", imageUrl });
+        guestDb.insertGeneration({
+          task_id: taskId, user_id: currentUserId, generation_type: "image", status: "done",
+          image_url: imageUrl, prompt: prompt.slice(0, 2000), model, aspect_ratio: aspectRatio, quality,
+          reference_image_urls: r2ImageUrls.length ? r2ImageUrls : undefined,
+        });
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error("[fal/image] background error:", message, e);
+        jobStore.set(taskId, { status: "error", error: message });
+      }
+    })();
+
+    return NextResponse.json({ taskId });
+  }
 
   // ── Azure Foundry branch ──────────────────────────────────────────────────────
   if (azureBaseUrl && azureDeployment) {
