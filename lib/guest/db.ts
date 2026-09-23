@@ -252,6 +252,18 @@ export function deleteAzureApiKey(): void {
   deleteSetting("azure_api_key");
 }
 
+export function getFalApiKey(): string | null {
+  return getSetting("fal_api_key") ?? process.env.FAL_KEY ?? null;
+}
+
+export function setFalApiKey(key: string): void {
+  setSetting("fal_api_key", key);
+}
+
+export function deleteFalApiKey(): void {
+  deleteSetting("fal_api_key");
+}
+
 // ── Folders ────────────────────────────────────────────────────────────────
 
 function rowToFolder(r: Record<string, unknown>): FolderRecord {

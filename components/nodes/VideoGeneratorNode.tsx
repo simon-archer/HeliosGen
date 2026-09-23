@@ -13,6 +13,7 @@ import { ShieldBan } from "lucide-react";
 import { VIDEO_MODELS as VIDEO_MODEL_CFG } from "@/lib/modelConfig";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
+import { getModelProvider } from "@/lib/providers";
 
 type VideoGeneratorNodeType = Node<NodeData, "videoGeneratorNode">;
 
@@ -1005,6 +1006,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
       referenceVideoUrls: upstream.referenceVideoUrls.slice(0, maxRefVideos),
       referenceAudioUrls: upstream.referenceAudioUrls.slice(0, maxRefAudios),
       ...(cfg.supportsSeeds && seed ? { seed } : {}),
+      ...(getModelProvider(videoModelId) === "fal" ? { falProvider: true } : {}),
     };
 
     if (debugMode) {
@@ -1990,7 +1992,7 @@ export default function VideoGeneratorNode({ id, data, selected }: NodeProps<Vid
               )}
 
               {/* Generate button — always right */}
-              {!readOnly && <GenerateButton onClick={handleGenerateBatch} busy={animBusy} extracting={isExtractingFrames} disabled={promptOverLimit || kieKeySet === false || busy || isExtractingFrames || hasFailedMediaInput} warningMessages={hasFailedMediaInput ? ["A connected image/video input has no valid content"] : undefined} />}
+              {!readOnly && <GenerateButton onClick={handleGenerateBatch} busy={animBusy} extracting={isExtractingFrames} disabled={promptOverLimit || (getModelProvider(videoModelId) === "kie" && kieKeySet === false) || busy || isExtractingFrames || hasFailedMediaInput} warningMessages={hasFailedMediaInput ? ["A connected image/video input has no valid content"] : undefined} />}
             </div>
           );
         })()}

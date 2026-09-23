@@ -7,6 +7,10 @@ import { VIDEO_MODELS } from "@/lib/modelConfig";
 import { getKieTokenForUser } from "@/lib/getKieToken";
 import { GUEST_USER_ID } from "@/lib/guestMode";
 import * as guestDb from "@/lib/guest/db";
+import { falUpload, runFal } from "@/lib/fal";
+import { readFile } from "node:fs/promises";
+import { join, normalize } from "node:path";
+import { MEDIA_DIR } from "@/lib/guest/paths";
 
 const KIE_BASE = "https://api.kie.ai";
 
@@ -45,13 +49,11 @@ export async function POST(req: NextRequest) {
     veoMode,
     generationType: rawGenerationType,
     callBackUrl:    rawCallBackUrl,
+    falProvider     = false,
     debugOnly       = false,
   } = body;
 
   const userId = GUEST_USER_ID;
-
-  const apiKey = (await getKieTokenForUser()) ?? process.env.KIE_API_TOKEN ?? null;
-  if (!apiKey) return NextResponse.json({ error: "No Kie.ai API key configured. Add one in Settings." }, { status: 401 });
 
   // The app polls kie.ai directly (lib/kieJobPoller) — no callback URL needed.
   const callBackUrl = rawCallBackUrl || undefined;
@@ -70,6 +72,67 @@ export async function POST(req: NextRequest) {
     : apiInput.durationMax > 0
     ? Math.max(apiInput.durationMin, Math.min(apiInput.durationMax, Number(duration)))
     : 0;
+
+  // ── fal.ai MiniMax H3 branch ────────────────────────────────────────────────
+  if (falProvider) {
+    const falKey = guestDb.getFalApiKey();
+    if (!falKey) return NextResponse.json({ error: "fal.ai API key is not configured. Add it in Settings." }, { status: 500 });
+    if (videoModel !== "minimax-h3") {
+      return NextResponse.json({ error: `fal.ai is not configured for ${cfg.name}.` }, { status: 400 });
+    }
+    if (rawEndFrame || rawRefVideoUrls.length || rawRefAudioUrls.length || rawRefImages.length > 1) {
+      return NextResponse.json({ error: "fal.ai H3 supports text or one start/reference image in Helios." }, { status: 400 });
+    }
+
+    const sourceImage = rawStartFrame || rawRefImages[0];
+    const taskId = `fal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    jobStore.set(taskId, { status: "pending", type: "video", userId: userId ?? undefined });
+
+    (async () => {
+      try {
+        let imageUrl: string | undefined;
+        let storedSource: string | undefined;
+        if (sourceImage) {
+          storedSource = await ensureR2(sourceImage, "references");
+          if (!storedSource.startsWith("/generated/")) throw new Error("Could not store the fal.ai reference image locally");
+          const rel = normalize(decodeURIComponent(storedSource.slice("/generated/".length).split(/[?#]/)[0]));
+          if (rel.startsWith("..") || rel.includes("\0")) throw new Error("Invalid reference image path");
+          const buffer = await readFile(join(MEDIA_DIR, rel));
+          const ext = rel.split(".").pop()?.toLowerCase();
+          const type = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png";
+          imageUrl = await falUpload(falKey, buffer, `h3-reference.${type === "image/jpeg" ? "jpg" : "png"}`, type);
+        }
+
+        const endpoint = `minimax/h3-max/${imageUrl ? "image-to-video" : "text-to-video"}`;
+        const input: Record<string, unknown> = {
+          prompt: prompt ?? "",
+          duration: clampedDuration,
+          resolution: resolution === "2K" ? "1080P" : resolution,
+          prompt_expansion_mode: "disabled",
+        };
+        if (imageUrl) input.image_url = imageUrl;
+        if (seed !== undefined && seed !== null && Number(seed) > 0) input.seed = Number(seed);
+        const result = await runFal<{ video?: { url?: string } }>(falKey, endpoint, input);
+        if (!result.video?.url) throw new Error("fal.ai completed without a video URL");
+        const videoUrl = await ensureR2(result.video.url, "generated");
+        jobStore.set(taskId, { status: "done", videoUrl });
+        guestDb.insertGeneration({
+          task_id: taskId, user_id: userId, generation_type: "video", status: "done", video_url: videoUrl,
+          model: videoModel, prompt, aspect_ratio: aspectRatio, duration: clampedDuration,
+          reference_image_urls: storedSource ? [storedSource] : undefined,
+        });
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error("[fal/video] background error:", message, e);
+        jobStore.set(taskId, { status: "error", error: message });
+      }
+    })();
+
+    return NextResponse.json({ taskId });
+  }
+
+  const apiKey = (await getKieTokenForUser()) ?? process.env.KIE_API_TOKEN ?? null;
+  if (!apiKey) return NextResponse.json({ error: "No Kie.ai API key configured. Add one in Settings." }, { status: 401 });
 
   let input: Record<string, unknown>;
   let effectiveApiId = cfg.apiId;
